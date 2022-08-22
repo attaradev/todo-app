@@ -34,6 +34,7 @@ export async function createTodo(
   logger.info('Creating a new todo')
   return await todosAccess.createTodo(todoPayload)
 }
+
 export async function getTodosForUser(userId: string): Promise<TodoItem[]> {
   logger.info(`Fetching Todos for user with ID: ${userId}`)
   return await todosAccess.getUserTodos(userId)
