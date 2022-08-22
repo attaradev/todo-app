@@ -1,6 +1,7 @@
 org: attara
-app: todo-app
+app: serverless-todo-app
 service: serverless-todo-app
+frameworkVersion: "3"
 
 plugins:
   - serverless-webpack
@@ -9,8 +10,7 @@ plugins:
 
 provider:
   name: aws
-  runtime: nodejs12.x
-  lambdaHashingVersion: "20201221"
+  runtime: nodejs14.x
 
   stage: ${opt:stage, 'dev'}
   region: ${opt:region, 'us-east-1'}
@@ -19,17 +19,19 @@ provider:
     lambda: true
     apiGateway: true
 
-  # Use these variables in the functions and resouorces section below. For example,
-  # ${self:provider.environment.ATTACHMENT_S3_BUCKET}
   environment:
     TODOS_TABLE: Todos-${self:provider.stage}
     TODOS_CREATED_AT_INDEX: CreatedAtIndex
-    ATTACHMENT_S3_BUCKET: todo-images-${self:provider.stage}
+    ATTACHMENT_S3_BUCKET: attara-todo-images-${self:provider.stage}
     SIGNED_URL_EXPIRATION: 300
 
   logs:
-    # Enable API Gateway logs
-    restApi: true
+    restApi:
+      accessLogging: true
+      format: "requestId: $context.requestId"
+      executionLogging: true
+      level: INFO
+      fullExecutionData: true
 
   iam:
     role:
@@ -38,25 +40,7 @@ provider:
           Action:
             - xray:PutTelemetryRecords
             - xray:PutTraceSegments
-          Resource:
-            - "*"
-        - Effect: Allow
-          Action:
-            - dynamodb:GetItem
-            - dynamodb:PutItem
-            - dynamodb:DeleteItem
-            - dynamodb:UpdateItem
-            - dynamodb:Query
-          Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
-        - Effect: Allow
-          Action:
-            - dynamodb:Query
-          Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}/index/${self:provider.environment.TODOS_CREATED_AT_INDEX}
-        - Effect: Allow
-          Action:
-            - s3:PutObject
-            - s3:GetObject
-          Resource: arn:aws:s3:::${self:provider.environment.ATTACHMENT_S3_BUCKET}/*
+          Resource: "*"
 
 functions:
   Auth:
@@ -69,15 +53,15 @@ functions:
           method: get
           path: todos
           cors: true
-          authorizer: Auth
-    iam:
-      role:
-        statements:
-          - Effect: Allow
-            Action:
-              - dynamodb:GetItem
-              - dynamodb:Query
-            Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+          authorizer:
+            name: Auth
+
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
 
   CreateTodo:
     handler: src/lambda/http/createTodo.handler
@@ -86,18 +70,17 @@ functions:
           method: post
           path: todos
           cors: true
-          authorizer: Auth
-          reqValidatorName: "RequestBodyValidator"
+          authorizer:
+            name: Auth
           request:
             schemas:
               application/json: ${file(models/create-todo-model.json)}
-    iam:
-      role:
-        statements:
-          - Effect: Allow
-            Action:
-              - dynamodb:PutItem
-            Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
 
   UpdateTodo:
     handler: src/lambda/http/updateTodo.handler
@@ -106,18 +89,17 @@ functions:
           method: patch
           path: todos/{todoId}
           cors: true
-          authorizer: Auth
-          reqValidatorName: "RequestBodyValidator"
+          authorizer:
+            name: Auth
           request:
             schemas:
               application/json: ${file(models/update-todo-model.json)}
-    iam:
-      role:
-        statements:
-          - Effect: Allow
-            Action:
-              - dynamodb:UpdateItem
-            Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
 
   DeleteTodo:
     handler: src/lambda/http/deleteTodo.handler
@@ -126,15 +108,14 @@ functions:
           method: delete
           path: todos/{todoId}
           cors: true
-          authorizer: Auth
+          authorizer:
+            name: Auth
 
-    iam:
-      role:
-        statements:
-          - Effect: Allow
-            Action:
-              - dynamodb:DeleteItem
-            Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
 
   GenerateUploadUrl:
     handler: src/lambda/http/generateUploadUrl.handler
@@ -143,16 +124,15 @@ functions:
           method: post
           path: todos/{todoId}/attachment
           cors: true
-          authorizer: Auth
+          authorizer:
+            name: Auth
 
-    iam:
-      role:
-        statements:
-          - Effect: Allow
-            Action:
-              - s3:PutObject
-              - s3:GetObject
-            Resource: arn:aws:s3:::${self:provider.environment.ATTACHMENT_S3_BUCKET}/*
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.ATTACHMENT_S3_BUCKET}/*
 
 resources:
   Resources:
@@ -194,7 +174,6 @@ resources:
             Projection:
               ProjectionType: ALL
 
-    # Do not forget to add the CorsConfiguration propoerty
     AttachmentsBucket:
       Type: AWS::S3::Bucket
       Properties:
@@ -223,15 +202,7 @@ resources:
             - Sid: PublicReadForGetBucketObjects
               Effect: Allow
               Principal: "*"
-              Action: "s3:GetObject"
+              Action:
+                - s3:GetObject
               Resource: "arn:aws:s3:::${self:provider.environment.ATTACHMENT_S3_BUCKET}/*"
         Bucket: !Ref AttachmentsBucket
-
-    RequestBodyValidator:
-      Type: AWS::ApiGateway::RequestValidator
-      Properties:
-        Name: "request-body-validator"
-        RestApiId:
-          Ref: ApiGatewayRestApi
-        ValidateRequestBody: true
-        ValidateRequestParameters: false
